@@ -19,6 +19,8 @@ package gin
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -31,6 +33,10 @@ type HTTPInterceptor struct {
 
 func (h *HTTPInterceptor) BeforeInvoke(invocation operator.Invocation) error {
 	context := invocation.Args()[0].(*gin.Context)
+	if traceIgnore("/fib/*", context.Request.RequestURI) || traceIgnore("/world", context.Request.RequestURI) {
+		fmt.Println("Before  trace ignore,url = ", context.Request.RequestURI)
+		return nil
+	}
 	s, err := tracing.CreateEntrySpan(
 		fmt.Sprintf("%s:%s", context.Request.Method, context.Request.URL.Path), func(headerKey string) (string, error) {
 			return context.Request.Header.Get(headerKey), nil
@@ -47,10 +53,14 @@ func (h *HTTPInterceptor) BeforeInvoke(invocation operator.Invocation) error {
 }
 
 func (h *HTTPInterceptor) AfterInvoke(invocation operator.Invocation, result ...interface{}) error {
+	context := invocation.Args()[0].(*gin.Context)
+	if traceIgnore("/fib/*", context.Request.RequestURI) || traceIgnore("/world", context.Request.RequestURI) {
+		fmt.Println("After  trace ignore,url = ", context.Request.RequestURI)
+		return nil
+	}
 	if invocation.GetContext() == nil {
 		return nil
 	}
-	context := invocation.Args()[0].(*gin.Context)
 	span := invocation.GetContext().(tracing.Span)
 	span.Tag(tracing.TagStatusCode, fmt.Sprintf("%d", context.Writer.Status()))
 	if len(context.Errors) > 0 {
@@ -58,4 +68,27 @@ func (h *HTTPInterceptor) AfterInvoke(invocation operator.Invocation, result ...
 	}
 	span.End()
 	return nil
+}
+
+func traceIgnore(pattern, url string) bool {
+	pattern1 := `^\*.*\*$` // * 字符开头和结尾   *example*
+	pattern2 := `.*\*$`    // * 字符开头   example*  ==>  ^example
+	pattern3 := `^\*.*`    // * 字符结尾   *example  ==>  example$
+
+	matched, err := regexp.MatchString(pattern1, pattern)
+	if err == nil && matched {
+		return strings.Contains(url, pattern[1:len(pattern)-1])
+	}
+
+	matched, err = regexp.MatchString(pattern2, pattern)
+	if err == nil && matched {
+		return strings.HasPrefix(url, pattern[:len(pattern)-1])
+	}
+
+	matched, err = regexp.MatchString(pattern3, pattern)
+	if err == nil && matched {
+		return strings.HasSuffix(url, pattern[1:])
+	}
+
+	return url == pattern
 }
